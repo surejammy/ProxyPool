@@ -3,15 +3,23 @@ import requests
 from lxml import etree
 import re
 import json
-import threading,Queue
+import threading,queue
 import multiprocessing
 import traceback
 import time,datetime
-import MySQLdb as db
+#import MySQLdb as db
+import pymysql
 import sys,os
-reload(sys)
-sys.setdefaultencoding('utf-8')
+#reload(sys)
+#sys.setdefaultencoding('utf-8')
 
+def connect_wxremit_db(host, port, user, password):
+    return pymysql.connect(host=host,
+      port=int(port),
+      user=user,
+      password=password,
+      database='postfix',
+      charset='utf8mb4')
 
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/45.0.2454.101 Safari/537.36"
@@ -25,8 +33,8 @@ def loggs(strs):
         time = str(datetime.datetime.now())[:-7]
         t = os.linesep
         s = time+' : '+str(strs)
-        print s
-        f.write(s+t)
+        print(s)
+        f.write((s+t).encode('utf-8'))
 
 #获取一张网页
 def getHtml(url,num_retrive=3):
@@ -99,8 +107,9 @@ def fetch_coobobo(page=10):
                             ip = '.'.join(t2)
                         else:
                             ip = False
-                    except Exception:
+                    except Exception as e:
                         ip = False
+                        loggs('fetch_coobobo error with %s' % (str(e)))
                     if not ip:
                         continue
                     one['ip'] = ip #代理IP地址
@@ -124,8 +133,9 @@ def fetch_kuaidaili(page=2):
                 types = tr.xpath('td[4]/text()')[0].lower() #类型
                 try:
                     speed = float(re.findall('\d+',tr.xpath('td[6]/text()')[0])[0]) #速度
-                except Exception:
+                except Exception as e:
                     speed = 100.0
+                    loggs('fetch_kuaidaili error with %s' % (str(e)))
                 if speed < 3.0:
                     one = {}
                     one['ip'] = tr.xpath('td[1]/text()')[0] #ip地址
@@ -377,7 +387,8 @@ def fetch_goubanjia():
                         speed = re.findall('\d+\.*\d*',tr.xpath('td[6]/text()')[0].strip())
                         one['speed'] = float(speed[0]) if len(speed)>0 else 0
                         ips.append(one)
-            except Exception,e:
+            except Exception as e:
+                loggs('fetch_goubanjia error with %s' % (str(e)))
                 continue
 
     return ips
@@ -399,7 +410,7 @@ def fetch_ip181():
                     one['speed'] = float(re.findall('\d+\.*\d*',tr.xpath('string(td[5])'))[0])
                     one['position'] = tr.xpath('string(td[6])').strip()
                     ips.append(one) 
-        except Exception,e:
+        except Exception as e:
             loggs('Error at fetch_ip181 with %s'%(str(e)))
 
     return ips
@@ -510,7 +521,12 @@ def fetch_superfastip():
 
 #提取数据库中有用的IP
 def getFromMysql():
-    con = db.connect('localhost','root','123456','spidertools',charset='utf8') #连接数据库
+    #con = db.connect('localhost','root','123456','spidertools',charset='utf8') #连接数据库
+    host = '10.22.32.7'
+    port = 3306
+    user = 'gordon'
+    password = 'RivTrDOW6wGmT7jp'
+    con = connect_wxremit_db(host, port, user, password)
     cur = con.cursor() #获取游标
     cur.execute('select ip,port from proxyippool') #查询所有IP
     ips = cur.fetchall() #获取所有查询结果
@@ -543,12 +559,13 @@ class ProxyConnectionText(threading.Thread):
             res = requests.get(url,headers=headers,proxies={self.protocol:self.ip},timeout=5)
             if res.status_code == 200:
                 self.q.put(self.ipd)
-        except Exception:
+        except Exception as e:
+            loggs('run with %s' % (str(e)))
             pass
 
 #测试代理ip是否可用
 def testIp(ip_list):
-    q = Queue.Queue()
+    q = queue.Queue()
     usefullIp = []
     iplists = [ip_list[i:i+400] for i in range(0,len(ip_list),400)]
     for ips in iplists:
@@ -570,7 +587,12 @@ def testIp(ip_list):
 
 #保存到数据库
 def saveToMysql(iplist):
-    con = db.connect('localhost','root','123456','spidertools',charset='utf8')
+    #con = db.connect('localhost','root','123456','spidertools',charset='utf8')
+    host = '10.22.32.7'
+    port = 3306
+    user = 'gordon'
+    password = 'RivTrDOW6wGmT7jp'
+    con = connect_wxremit_db(host, port, user, password)
     cur = con.cursor()
     ok = 0
     for ipd in iplist:
@@ -585,7 +607,7 @@ def saveToMysql(iplist):
         try:
             cur.execute(sql)
             ok += 1
-        except Exception,e:
+        except Exception as e:
             loggs('error at(%s) with %s'%(sql,str(e)))
     con.commit()
     cur.close()
@@ -595,13 +617,20 @@ def saveToMysql(iplist):
 
 #对数据库中的IP进行加分或者减分
 def changeIpScore(iplist,aord):
-    con = db.connect('localhost','root','123456','spidertools',charset='utf8')
+    #con = db.connect('localhost','root','123456','spidertools',charset='utf8')
+    #con = db.connect('10.22.32.7', 'gordon', 'RivTrDOW6wGmT7jp', 'postfix', charset='utf8mb4')
+    host = '10.22.32.7'
+    port = 3306
+    user = 'gordon'
+    password = 'RivTrDOW6wGmT7jp'
+    con = connect_wxremit_db(host, port, user, password)
     cur = con.cursor()
     score = "+1" if aord else "-1"
     for ipd in iplist:
         try:
             ip = ipd.get('ip')
-        except Exception,e:
+        except Exception as e:
+            loggs('changeIpScore error with %s' % (str(e)))
             continue
         port = ipd.get('port')
         ip_data = 'update proxyippool set score=score%s where ip="%s" and port="%s"'%(score,ip,port)
@@ -609,11 +638,11 @@ def changeIpScore(iplist,aord):
             ip_score_ded = 'update proxyippool set failtimes=failtimes+1 where ip="%s" and port="%s"'%(ip,port)
             try:
                 cur.execute(ip_score_ded)
-            except Exception,e:
+            except Exception as e:
                 loggs('error at(%s) with %s'%(ip_data,str(e)))
         try:
             cur.execute(ip_data)
-        except Exception,e:
+        except Exception as e:
             loggs('error at(%s) with %s'%(ip_data,str(e)))
     con.commit()
     cur.close()
@@ -623,7 +652,13 @@ def changeIpScore(iplist,aord):
 
 #删除数据库中失败次数>=3的IP
 def deleteIpFromMysql():
-    con = db.connect('localhost','root','123456','spidertools',charset='utf8')
+    #con = db.connect('localhost','root','123456','spidertools',charset='utf8')
+    #con = db.connect('10.22.32.7', 'gordon', 'RivTrDOW6wGmT7jp', 'postfix', charset='utf8mb4')
+    host = '10.22.32.7'
+    port = 3306
+    user = 'gordon'
+    password = 'RivTrDOW6wGmT7jp'
+    con = connect_wxremit_db(host, port, user, password)
     cur = con.cursor()
     sql = 'delete from proxyippool where failtimes>=3'
     cur.execute(sql)
@@ -646,7 +681,7 @@ def list2dict(iplist):
 #传入一个IP字典，返回一个IP对象列表
 def dict2list(ipdict):
     iptest = []
-    for k,v in ipdict.iteritems(): #去重还原
+    for k,v in ipdict.items(): #去重还原
         iptest.append(v)
     return iptest
 
@@ -691,7 +726,8 @@ def crawl_ip_not_in_mysql(crawl_ip,mysql_old_ip_dict):
 
 #将json以更优雅的方式显示
 def printf(jd):
-    print json.dumps(jd,sort_keys=True,indent=4,separators=(',',': '),encoding='utf8',ensure_ascii=False)
+    tmp = json.dumps(jd,sort_keys=True,indent=4,separators=(',',': '),encoding='utf8',ensure_ascii=False)
+    print(tmp)
 
 #传入一个字符串形式的函数名，返回该函数的调用接口
 def function(f):
@@ -728,7 +764,7 @@ def main():
             data = function(func)()
             loggs(u"%s,%d"%(func,len(data)))
             allIp.extend(data)
-        except Exception,e:
+        except Exception as e:
             loggs('Error at %s with %s'%(func,str(e)))
     iptest = drop_dups(allIp) #将从网上抓取到的IP进行去重操作
     crawl_ip = testIp(iptest) #测试抓取到的IP是否可用
@@ -747,7 +783,7 @@ def main():
 #用来做测试的地方
 def test():
     path = '\\'.join(sys.argv[0].split('\\')[:-1])
-    print path
+    print(path)
 
 
 if __name__ == '__main__':
